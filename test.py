@@ -1,0 +1,2 @@
+x = ""
+print(int(x))

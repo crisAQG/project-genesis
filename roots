@@ -1,0 +1,11 @@
+Raiz
+- data => contenido
+  - modules => codigos
+    - scene => ventanas o escenas del juego (menu, configuraciones, juego, etc)
+    - services => servicios de uso general
+    - states => estados o comportamientes dinamicos en situaciones (logica ia de entidades, fisicas)
+    - type => instancias / objetos virtualmente fisicos (entidades, bloques, etc)
+  - sprites => graficos
+  - sounds => sfx / musica
+- logs => registros generales o emergentes
+- saves => mundos almacenados

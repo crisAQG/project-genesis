@@ -173,27 +173,30 @@ class _icon_label_mixin:
 class _text_input_mixin:
     """
     Mixin interno (no se instancia solo) que agrega a los campos de
-    texto (input e img_input):
-
-    - Cursor con posicion editable: un clic dentro del campo ubica el
-      cursor en el caracter mas cercano a ese punto (no solo al
-      final); las flechas izq/der lo mueven de a un caracter, Home/End
-      lo mandan al principio/final, y Backspace/Delete borran a partir
-      de esa posicion.
-    - Texto centrado verticalmente en el rect del campo.
-    - Scroll horizontal automatico: si el texto no entra completo, se
-      recorre para que el cursor siempre quede visible, y se recorta
-      (clip) para que nunca se dibuje nada fuera del rect del campo.
-    - Filtro de caracteres opcional (char_filter): None (default) no
-      filtra nada; "numbers" solo deja escribir digitos; "letters"
-      solo deja escribir letras. Backspace/Delete/flechas/Home/End no
-      se ven afectados, solo la insercion de caracteres nuevos.
-
-    Requiere que la clase que lo use ya tenga self.rect definido.
+    texto (input e img_input).
     """
 
-    def _init_text_input(self, font, text="", max_len=20, padding=8, char_filter=None):
+    def _init_text_input(
+        self,
+        font,
+        text="",
+        max_len=20,
+        padding=8,
+        char_filter=None,
+        scale=1.0
+    ):
         self.font = font
+        self.scale = scale
+
+        # Tamaño aproximado de la fuente original
+        base_height = font.get_height()
+        scaled_height = round(base_height * scale)
+
+        # Escalar usando el tamaño de fuente.
+        # Esto conserva las métricas necesarias para cursor/scroll.
+        if scale != 1.0:
+            self.font = pygame.font.Font(None, scaled_height)
+
         self.txt = text
         self.max_len = max_len
         self.padding = padding
@@ -218,43 +221,63 @@ class _text_input_mixin:
     def _text_width(self, s):
         return self.font.size(s)[0]
 
+    def get_text(self):
+        """Retorna el texto actual como string."""
+        return self.txt
+
     def _set_cursor_from_click(self, mouse_x):
-        """Ubica el cursor en el caracter mas cercano al punto donde se hizo clic."""
         rel_x = mouse_x - (self.rect.x + self.padding) + self.scroll_x
 
         best_i, best_dist = 0, abs(rel_x)
+
         for i in range(1, len(self.txt) + 1):
-            dist = abs(self._text_width(self.txt[:i]) - rel_x)
+            dist = abs(
+                self._text_width(self.txt[:i]) - rel_x
+            )
+
             if dist < best_dist:
                 best_dist, best_i = dist, i
 
         self.cursor_pos = best_i
 
     def _update_scroll(self):
-        """Ajusta scroll_x para que el cursor siempre quede dentro del area visible."""
-        visible_w = max(0, self.rect.width - 2 * self.padding)
+        visible_w = max(
+            0,
+            self.rect.width - 2 * self.padding
+        )
+
         total_w = self._text_width(self.txt)
 
         if total_w <= visible_w:
             self.scroll_x = 0
             return
 
-        cursor_w = self._text_width(self.txt[:self.cursor_pos])
+        cursor_w = self._text_width(
+            self.txt[:self.cursor_pos]
+        )
 
         if cursor_w - self.scroll_x > visible_w:
             self.scroll_x = cursor_w - visible_w
+
         if cursor_w - self.scroll_x < 0:
             self.scroll_x = cursor_w
 
-        self.scroll_x = max(0, min(self.scroll_x, total_w - visible_w))
+        self.scroll_x = max(
+            0,
+            min(
+                self.scroll_x,
+                total_w - visible_w
+            )
+        )
 
     def _handle_text_event(self, event):
-        """Llamar dentro de event(event) de la clase que use este mixin."""
         if event.type == pygame.MOUSEBUTTONDOWN:
             self.active = self.rect.collidepoint(event.pos)
+
             if self.active:
                 self._set_cursor_from_click(event.pos[0])
                 self._update_scroll()
+
             return
 
         if not self.active or event.type != pygame.KEYDOWN:
@@ -262,47 +285,105 @@ class _text_input_mixin:
 
         if event.key == pygame.K_BACKSPACE:
             if self.cursor_pos > 0:
-                self.txt = self.txt[:self.cursor_pos - 1] + self.txt[self.cursor_pos:]
+                self.txt = (
+                    self.txt[:self.cursor_pos - 1]
+                    + self.txt[self.cursor_pos:]
+                )
                 self.cursor_pos -= 1
+
         elif event.key == pygame.K_DELETE:
-            self.txt = self.txt[:self.cursor_pos] + self.txt[self.cursor_pos + 1:]
+            self.txt = (
+                self.txt[:self.cursor_pos]
+                + self.txt[self.cursor_pos + 1:]
+            )
+
         elif event.key == pygame.K_LEFT:
-            self.cursor_pos = max(0, self.cursor_pos - 1)
+            self.cursor_pos = max(
+                0,
+                self.cursor_pos - 1
+            )
+
         elif event.key == pygame.K_RIGHT:
-            self.cursor_pos = min(len(self.txt), self.cursor_pos + 1)
+            self.cursor_pos = min(
+                len(self.txt),
+                self.cursor_pos + 1
+            )
+
         elif event.key == pygame.K_HOME:
             self.cursor_pos = 0
+
         elif event.key == pygame.K_END:
             self.cursor_pos = len(self.txt)
+
         elif event.key == pygame.K_RETURN:
             self.active = False
-        elif (event.unicode and event.unicode.isprintable() and len(self.txt) < self.max_len
-              and self._char_allowed(event.unicode)):
-            self.txt = self.txt[:self.cursor_pos] + event.unicode + self.txt[self.cursor_pos:]
+
+        elif (
+            event.unicode
+            and event.unicode.isprintable()
+            and len(self.txt) < self.max_len
+            and self._char_allowed(event.unicode)
+        ):
+            self.txt = (
+                self.txt[:self.cursor_pos]
+                + event.unicode
+                + self.txt[self.cursor_pos:]
+            )
             self.cursor_pos += 1
 
         self._update_scroll()
 
     def update(self, dt):
         self.cursor_timer += dt
+
         if self.cursor_timer >= self.cursor_delay:
             self.cursor_visible = not self.cursor_visible
             self.cursor_timer = 0
 
     def _draw_text_input(self, screen):
-        text_surf = self.font.render(self.txt, True, (255, 255, 255))
-        text_y = self.rect.centery - text_surf.get_height() // 2
+        self.text_surf = self.font.render(
+            self.txt,
+            True,
+            (255, 255, 255)
+        )
+        text_r = self.text_surf.get_rect()
+
+        text_y = (
+            self.rect.centery
+            - self.text_surf.get_height() // 2
+        )
 
         prev_clip = screen.get_clip()
         screen.set_clip(self.rect)
-        screen.blit(text_surf, (self.rect.x + self.padding - self.scroll_x, text_y))
+
+        screen.blit(
+            self.text_surf,
+            (
+                self.rect.x + self.padding - self.scroll_x,
+                text_y
+            )
+        )
 
         if self.active and self.cursor_visible:
-            cursor_x = self.rect.x + self.padding - self.scroll_x + self._text_width(self.txt[:self.cursor_pos])
-            pygame.draw.line(screen, (255, 255, 255),
-                              (cursor_x, self.rect.y + 4), (cursor_x, self.rect.bottom - 4), 2)
+            cursor_x = (
+                self.rect.x
+                + self.padding
+                - self.scroll_x
+                + self._text_width(
+                    self.txt[:self.cursor_pos]
+                )
+            )
+
+            pygame.draw.line(
+                screen,
+                (255, 255, 255),
+                (cursor_x, self.rect.y + 10*self.scale),
+                (cursor_x, self.rect.bottom - 10*self.scale),
+                2
+            )
 
         screen.set_clip(prev_clip)
+
 
 
 # ============================================================
@@ -509,7 +590,7 @@ class input(gui_element, _text_input_mixin):
 
     def __init__(self, x, y, w, h, font, scale=1.0, border_rad=0,
                  color=red, hovcolor=green, clickcolor=blue, alpha=0, text="",
-                 char_filter=None):
+                 char_filter=None, txt_scale: float = 1.0):
         super().__init__(x, y, w, h, scale)
 
         self.b_rad = border_rad
@@ -517,7 +598,7 @@ class input(gui_element, _text_input_mixin):
         self.cstate = [color, hovcolor, clickcolor]
         self.currentcolor = self.cstate[0]
 
-        self._init_text_input(font, text, char_filter=char_filter)
+        self._init_text_input(font, text, padding=10, char_filter=char_filter, scale=txt_scale)
 
     def event(self, event):
         self._handle_text_event(event)
@@ -674,9 +755,9 @@ class img_input(img_element, _text_input_mixin):
     """
 
     def __init__(self, x, y, sprite_manager, sx, sy, w, h, font, scale=1.0, text="",
-                 char_filter=None):
+                 char_filter=None, txt_scale: float = 1.0):
         super().__init__(x, y, sprite_manager, sx, sy, w, h, scale)
-        self._init_text_input(font, text, char_filter=char_filter)
+        self._init_text_input(font, text, padding=12, char_filter=char_filter, scale=txt_scale)
 
     def event(self, event):
         self._handle_text_event(event)

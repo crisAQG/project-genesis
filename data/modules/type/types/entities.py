@@ -2,25 +2,19 @@ import pygame
 from pygame import Vector2
 
 from data.modules.services.spr_manager import spr_manager
-from data.modules.type.entity import entity
+from data.modules.type.entity import Entity
 from data.modules.services.inventory import inventory
 from settings import *
 
 
-class player(entity):
+class player(Entity):
     def __init__(self, game, scene, worldx, worldy, size, scale, hp, dmg, speed, sprint_boost, shield, color, image, is_flying=False):
         super().__init__(worldx, worldy, size, scale, color, is_flying)
         self.game = game
         self.scene = scene
 
         # Crea la UI del inventario
-        # self.inventory = [
-
-        # ]
-
-        # self.inv_mgr = inventory(self.inventory)
-
-        # Usar directamente los píxeles
+        
         self.velocity = Vector2(0, 0)
         self.angle = 0
         self.rotation_speed = 5
@@ -102,3 +96,16 @@ class player(entity):
 
     def draw(self, camera, screen):
         screen.blit(self.image, camera.apply(self))
+
+
+class npc(Entity):
+    def __init__(self, worldx, worldy, size, scale, color, is_flying=False):
+        super().__init__(worldx, worldy, size, scale, color, is_flying)
+        self.img = spr_manager("data\sprites\Player.png").get_sprite(0, 0, self.size, self.size)
+        self.rect = self.img.get_rect()
+
+    def update(self):
+        self.rect.center = self.position
+
+    def draw(self, screen, camera):
+        screen.blit(self.img, camera.apply_rect(self.rect))

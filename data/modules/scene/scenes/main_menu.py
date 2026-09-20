@@ -292,6 +292,10 @@ class main_menu(scene):
         if self.hard_btn.event():
             self.dif_sel = "Hard"
 
+        if self.enter_wrld.event():
+            self.world_data = [self.w_name_input.get_text(), self.dif_sel, int(self.w_seed_input.get_text())]
+            self.game.set_scene("game", self.world_data)
+
         if self.vol_slide.event():
             self.vol_txt.set_text(f'Volumen: {int(settings.vol*100)}%')
             settings.vol = self.vol_slide.get_value()
@@ -311,9 +315,9 @@ class main_menu(scene):
         self.moon.orbit(self.planet, 32, -0.005, 0, 0, 0)
 
         # Game panel
-        self.name_pan.set_text(f'Nombre: \n{self.w_name_input.get_text()}')
-        self.dif_pan.set_text(f'Nombre: \n{self.dif_sel}')
-        self.seed_pan.set_text(f'Nombre: \n{self.w_seed_input.get_text()}')
+        self.name_pan.set_text(f'Name: \n{self.w_name_input.get_text()}')
+        self.dif_pan.set_text(f'Difficulty: \n{self.dif_sel}')
+        self.seed_pan.set_text(f'Seed: \n{self.w_seed_input.get_text()}')
 
         # Menu
         self.play_btn.update_movement()

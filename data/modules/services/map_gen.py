@@ -5,20 +5,6 @@ from data.modules.services.spr_manager import spr_manager
 
 
 tile_size = 32
-height_range = [
-    (0.32, "agua_profunda", (17, 63, 122), False, ""),
-    (0.38, "agua", (31, 99, 173), False),
-    (0.42, "arena", (231, 213, 158), True),
-    (0.62, "pasto", (85, 158, 68), True),
-    (0.83, "montania", (120, 114, 108), True),
-    (0.9, "nieve", (240, 240, 245), True),
-]
-
-def height_map(h):
-    for max_h, name, color, walkable in height_range:
-        if h <= max_h:
-            return name, color, walkable
-    return height_range[-1][1], height_range[-1][2], height_range[-1][3]
 
 
 class map_features:
@@ -26,15 +12,38 @@ class map_features:
     Genera biomas (celdas tipo Voronoi/Worley) y ríos de forma
     DETERMINISTA a partir de la seed del mundo y la posición en
     tiles. No guarda estado que dependa del orden de generación de
-    chunks: la celda Voronoi y el ruido de río de una posición dan
-    siempre el mismo resultado, la calcules cuando la calcules, así
-    que no hace falta persistir nada de esto en el save().
+    chunks: la celda Voronoi, la variante de sprite de cada tile y el
+    ruido de río de una posición dan siempre el mismo resultado, la
+    calcules cuando la calcules, así que no hace falta persistir nada
+    de esto en el save().
 
-    IMPORTANTE sobre el rango de alturas: en tu height_range, "pasto"
+    IMPORTANTE sobre el rango de alturas: en self.terrain_range, "pasto"
     es 0.42 < h <= 0.62, y 0.62 es donde EMPIEZA "montania". Dejé
     BIOME_MIN_HEIGHT/BIOME_MAX_HEIGHT en (0.42, 0.62) para que caiga
     dentro de pasto. Si en realidad querías la franja de montaña
     (todo lo que es > 0.62), cambia estos dos valores a (0.62, 0.83).
+
+    VARIANTES: tanto los biomas como el terreno base (agua, arena,
+    pasto, montania, nieve...) definen "variants", una lista de tuplas
+    (sprite, peso). El peso es relativo -no hace falta que sumen 1 ni
+    100, se normaliza solo-. Qué variante le toca a cada tile se
+    decide con un hash de (seed, world_tx, world_ty), NO con
+    random.random() en cada llamada: así el mismo tile siempre
+    renderiza la misma variante, sin importar cuándo ni en qué orden
+    se generó su chunk. Biomas y terreno usan un "salt" distinto en
+    ese hash para que sus rolls no coincidan en la misma posición.
+
+    PROPS (plantas/árboles): en vez de tirar un dado por cada tile de
+    bioma -lo que puede amontonar props pegados unos a otros-, se usa
+    el MISMO truco que los sitios Voronoi de bioma: el mundo se divide
+    en una grilla de celdas de PROP_CELL_SIZE x PROP_CELL_SIZE tiles,
+    y cada celda aporta COMO MÁXIMO un punto candidato (con jitter
+    determinista, acotado al centro de la celda por
+    PROP_JITTER_MARGIN). Solo ESE tile puntual puede terminar con un
+    prop, y la distancia entre dos candidatos de celdas vecinas queda
+    GARANTIZADA en al menos 2*PROP_JITTER_MARGIN + 1 tiles -ajustá
+    PROP_CELL_SIZE/PROP_JITTER_MARGIN según el tamaño de tus sprites
+    más grandes para que ni en el peor caso lleguen a superponerse-.
     """
 
     BIOME_MIN_HEIGHT = 0.42
@@ -45,7 +54,8 @@ class map_features:
     RIVER_WIDTH = 0.015        # más alto = ríos más anchos
     RIVER_COLOR = (54, 120, 190)
 
-    env_tiles = spr_manager(r"data/sprites/tiles_sheet.png")
+    PROP_CELL_SIZE = 6         # tamaño de celda de props, en tiles
+    PROP_JITTER_MARGIN = 2     # margen desde el borde de la celda (ver _prop_site)
 
     def __init__(self, seed):
         self.seed = seed
@@ -53,24 +63,193 @@ class map_features:
         # los ríos no queden pegados a la forma del terreno.
         self.river_noise = noise2(seed + 1)
         self._site_cache = {}
+        self._prop_site_cache = {}
 
         # Carga del spritesheet y armado de biomas ACÁ ADENTRO a propósito:
         # esto corre cuando creás map_gen(...), no cuando se hace el import
         # del módulo. Asegurate de crear tu map_gen(...) DESPUÉS de
         # pygame.display.set_mode(...) en tu main, o vas a seguir viendo
         # el mismo error de conversión.
+        self.env_tiles = spr_manager(r"data/sprites/tile_sheet.png")
+
+        # Ajusta las coordenadas (sx, sy) de cada variante a donde
+        # realmente estén en tu tiles_sheet.png. Los pesos son
+        # relativos entre sí (p. ej. 70/20/10 == 70%/20%/10%).
         self.biomes = [
-            {"name": "pradera",     "tint": (0, 0, 0),       "spr": self.env_tiles.get_sprite(0, 0, 32, 32)},
-            {"name": "bosque",      "tint": (-30, -10, -25), "spr": self.env_tiles.get_sprite(32, 0, 32, 32)},
-            {"name": "sabana",      "tint": (35, 15, -45),   "spr": self.env_tiles.get_sprite(0, 0, 32, 32)},
-            {"name": "tundra",      "tint": (-25, -5, 15),   "spr": self.env_tiles.get_sprite(32*3, 0, 32, 32)},
-            {"name": "jungla",      "tint": (35, 15, -45),   "spr": self.env_tiles.get_sprite(32*3, 0, 32, 32)},
+            {
+                "name": "pradera",
+                "tint": (0, 0, 0),
+                "variants": [
+                    (self.env_tiles.get_sprite(0, 0, 32, 32), 50),
+                    (self.env_tiles.get_sprite(32*2, 0, 32, 32), 20),
+                    (self.env_tiles.get_sprite(32, 0, 32, 32), 10),
+                    (self.env_tiles.get_sprite(32*3, 0, 32, 32), 15),
+                    (self.env_tiles.get_sprite(32*5, 0, 32, 32), 5),
+                ],
+                "props": [
+                    (self.env_tiles.get_sprite(0, 32*2, 32, 32), 1, 0.1),
+                    (self.env_tiles.get_sprite(32, 32*2, 32, 32), 1, 0.07),
+                    (self.env_tiles.get_sprite(0, 32*3 + 64*2, 128, 128), 3, 0.1),
+                    (self.env_tiles.get_sprite(128*4, 32*3 + 64*2, 128, 128), 3, 0.08),
+                ],
+            },
+            {
+                "name": "bosque",
+                "tint": (-30, -10, -25),
+                "variants": [
+                    (self.env_tiles.get_sprite(0, 0, 32, 32), 80),
+                    (self.env_tiles.get_sprite(32*2, 0, 32, 32), 20),
+                ],
+                "props": [
+                    (self.env_tiles.get_sprite(0, 32*2, 32, 32), 1, 0.07),
+                    (self.env_tiles.get_sprite(0, 32*3 + 64*2, 128, 128), 3, 0.2),
+                    (self.env_tiles.get_sprite(128*4, 32*3 + 64*2, 128, 128), 3, 0.1),
+                ],
+            },
+            {
+                "name": "sabana",
+                "tint": (35, 15, -45),
+                "variants": [
+                    (self.env_tiles.get_sprite(32*5, 0, 32, 32), 40),
+                    (self.env_tiles.get_sprite(32*7, 0, 32, 32), 35),
+                    (self.env_tiles.get_sprite(32*6, 0, 32, 32), 25)
+                ],
+                "props": [
+                    (self.env_tiles.get_sprite(0, 32*3 + 64*2, 128, 128), 3, 0.06),
+                    (self.env_tiles.get_sprite(128*4, 32*3 + 64*2, 128, 128), 3, 0.06),
+                ],
+            },
+            {
+                "name": "tundra",
+                "tint": (-25, -5, 15),
+                "variants": [
+                    (self.env_tiles.get_sprite(32*12, 0, 32, 32), 50),
+                    (self.env_tiles.get_sprite(32*13, 0, 32, 32), 30),
+                    (self.env_tiles.get_sprite(32*14, 0, 32, 32), 20),
+                ],
+                "props": [
+                    (self.env_tiles.get_sprite(32*3, 32*2, 32, 32), 1, 0.07),
+                    (self.env_tiles.get_sprite(128*3, 32*3 + 64*2, 128, 128), 3, 0.03),
+                    (self.env_tiles.get_sprite(128*2, 32*3 + 64*2 + 128, 128, 128), 3, 0.03),
+                ],
+            },
+            {
+                "name": "jungla",
+                "tint": (35, 15, -45),
+                "variants": [
+                    (self.env_tiles.get_sprite(32*11, 0, 32, 32), 40),
+                    (self.env_tiles.get_sprite(32*10, 0, 32, 32), 20),
+                    (self.env_tiles.get_sprite(32*9, 0, 32, 32), 30),
+                    (self.env_tiles.get_sprite(32*8, 0, 32, 32), 10),
+                ],
+                "props": [
+                    (self.env_tiles.get_sprite(32*2, 32*2, 32, 32), 1, 0.08),
+                    (self.env_tiles.get_sprite(128, 32*3 + 64*2, 128, 128), 3, 0.1),
+                    (self.env_tiles.get_sprite(0, 32*3 + 64*2 + 128, 128, 128), 3, 0.09),
+                ],
+            },
+            {
+                "name": "magic_forest",
+                "tint": (45, 25, -55),
+                "variants": [
+                    (self.env_tiles.get_sprite(32*17, 0, 32, 32), 40),
+                    (self.env_tiles.get_sprite(32*18, 0, 32, 32), 30),
+                    (self.env_tiles.get_sprite(32*19, 0, 32, 32), 30),
+                ],
+                "props": [
+                    (self.env_tiles.get_sprite(32*10, 32, 32, 32), 1, 0.001),
+                    (self.env_tiles.get_sprite(32*15, 32, 32, 32), 1, 0.0005),
+                ],
+            },
+        ]
+
+        # Terreno base (fuera de la franja de biomas): mismo criterio
+        # que arriba, cada entrada tiene "variants" con sprite+peso.
+        # Ajusta las coordenadas (sx, sy) a tu tiles_sheet.png real
+        # -las de acá son placeholders-.
+        self.terrain_range = [
+            {
+                "max_h": 0.27, "name": "agua_profunda", "color": (17, 63, 122), "walkable": False,
+                "variants": [
+                    (self.env_tiles.get_sprite(32*4, 32, 32, 32), 100),
+                ],
+            },
+            {
+                "max_h": 0.38, "name": "agua", "color": (31, 99, 173), "walkable": False,
+                "variants": [
+                    (self.env_tiles.get_sprite(32*3, 32, 32, 32), 100),
+                ],
+            },
+            {
+                "max_h": 0.42, "name": "arena", "color": (231, 213, 158), "walkable": True,
+                "variants": [
+                    (self.env_tiles.get_sprite(0, 32, 32, 32), 85),
+                    (self.env_tiles.get_sprite(32*2, 32, 32, 32), 15),
+                ],
+            },
+            {
+                "max_h": 0.62, "name": "pasto", "color": (85, 158, 68), "walkable": True,
+                "variants": [
+                    (self.env_tiles.get_sprite(0, 0, 32, 32), 100),
+                ],
+            },
+            {
+                "max_h": 0.87, "name": "montania", "color": (120, 114, 108), "walkable": True,
+                "variants": [
+                    (self.env_tiles.get_sprite(32*5, 0, 32, 32), 100),
+                ],
+            },
+            {
+                "max_h": 0.9, "name": "nieve", "color": (240, 240, 245), "walkable": True,
+                "variants": [
+                    (self.env_tiles.get_sprite(32*15, 0, 32, 32), 60),
+                    (self.env_tiles.get_sprite(32*16, 0, 32, 32), 40),
+                ],
+            },
         ]
 
     def _hash_cell(self, ccx, ccy):
         n = (ccx * 374761393) ^ (ccy * 668265263) ^ (self.seed * 2147483647)
         n = (n ^ (n >> 13)) * 1274126177
         return (n ^ (n >> 16)) & 0xffffffff
+
+    def _hash_variant(self, world_tx, world_ty, salt=0):
+        """
+        Hash independiente del de los sitios Voronoi (constante y offset
+        de seed distintos), para que la variante elegida no quede
+        correlacionada con el bioma elegido. "salt" separa el roll de
+        biomas del roll de terreno base, para que no coincidan en la
+        misma posición. Devuelve un float determinista en [0, 1) a
+        partir de (seed, world_tx, world_ty, salt).
+        """
+        n = (world_tx * 2654435761) ^ (world_ty * 40503) ^ ((self.seed + 1 + salt) * 2246822519)
+        n = (n ^ (n >> 13)) * 3266489917
+        n = n ^ (n >> 16)
+        return (n & 0xffffffff) / 0xffffffff
+
+    def _pick_variant(self, entry, world_tx, world_ty, salt=0):
+        """
+        Elige, de forma determinista según la posición del tile, cuál
+        sprite de entry["variants"] le toca a ESTE tile (bioma o
+        terreno base), respetando los pesos de probabilidad.
+        """
+        variants = entry.get("variants")
+        if not variants:
+            return None
+        if len(variants) == 1:
+            return variants[0][0]
+
+        total = sum(weight for _, weight in variants)
+        if total <= 0:
+            return variants[0][0]
+
+        roll = self._hash_variant(world_tx, world_ty, salt) * total
+        acc = 0.0
+        for spr, weight in variants:
+            acc += weight
+            if roll <= acc:
+                return spr
+        return variants[-1][0]  # fallback por redondeo de floats
 
     def _site(self, ccx, ccy):
         """Punto Voronoi (con jitter) y bioma asignado a una celda de la grilla."""
@@ -104,39 +283,167 @@ class map_features:
                                   world_ty * self.RIVER_FREQUENCY)
         return abs(n - 0.5) < self.RIVER_WIDTH
 
-    def overlay(self, height, world_tx, world_ty):
+    def _terrain_for_height(self, height):
+        """Entrada de self.terrain_range (dict) que corresponde a esta altura."""
+        for entry in self.terrain_range:
+            if height <= entry["max_h"]:
+                return entry
+        return self.terrain_range[-1]
+
+    def base_terrain(self, height, world_tx, world_ty):
         """
-        Devuelve (biome, color, walkable) si hay que sobrescribir el
+        Terreno base (agua, arena, pasto, montania, nieve...) para un
+        tile FUERA de la franja de biomas, con su propia variante de
+        sprite ya resuelta -mismo criterio determinista que overlay()-.
+        Devuelve (name, color, walkable, spr).
+        """
+        terrain = self._terrain_for_height(height)
+        spr = self._pick_variant(terrain, world_tx, world_ty, salt=2)
+        return terrain["name"], terrain["color"], terrain["walkable"], spr
+
+    def overlay(self, height, world_tx, world_ty, biome=None, river=None):
+        """
+        Devuelve (biome, color, walkable, spr) si hay que sobrescribir el
         tile base (por estar en la franja de biomas), o None si el
         tile se queda con su terreno normal (agua, arena, nieve, etc.
-        quedan intactos porque están fuera del rango).
+        quedan intactos porque están fuera del rango). "spr" ya viene
+        resuelto a la variante concreta que le toca a ESTE tile.
+
+        "biome"/"river" se pueden pasar ya calculados -tile_data() lo
+        hace para no llamar a get_biome()/is_river() dos veces por
+        tile-; si se dejan en None, este método los resuelve solo.
         """
         if not (self.BIOME_MIN_HEIGHT < height <= self.BIOME_MAX_HEIGHT):
             return None
 
-        if self.is_river(world_tx, world_ty):
-            return "rio", self.RIVER_COLOR, False
+        if river is None:
+            river = self.is_river(world_tx, world_ty)
+        if river:
+            return "rio", self.RIVER_COLOR, False, None
 
-        _, base_color, base_walkable = height_map(height)
-        biome = self.get_biome(world_tx, world_ty)
-        r, g, b = base_color
+        if biome is None:
+            biome = self.get_biome(world_tx, world_ty)
+
+        base = self._terrain_for_height(height)
+        r, g, b = base["color"]
         tr, tg, tb = biome["tint"]
         color = (
             max(0, min(255, r + tr)),
             max(0, min(255, g + tg)),
             max(0, min(255, b + tb)),
         )
-        return biome["name"], color, base_walkable, biome["spr"]
+        spr = self._pick_variant(biome, world_tx, world_ty, salt=1)
+        return biome["name"], color, base["walkable"], spr
+
+    def tile_data(self, height, world_tx, world_ty):
+        """
+        Punto de entrada único para chunk._generate(): resuelve terreno
+        (bioma -con su variante y tint- o terreno base, según
+        corresponda) Y decide si a este tile le toca un prop, todo en
+        un solo paso -is_river()/get_biome() se calculan COMO MUCHO
+        una vez por tile, no dos-.
+
+        Devuelve (tile_result, prop):
+          - tile_result: (name, color, walkable, spr)
+          - prop: (sprite, size_px) o None
+        """
+        in_biome_range = self.BIOME_MIN_HEIGHT < height <= self.BIOME_MAX_HEIGHT
+        river = self.is_river(world_tx, world_ty) if in_biome_range else False
+        biome = self.get_biome(world_tx, world_ty) if (in_biome_range and not river) else None
+
+        tile_result = self.overlay(height, world_tx, world_ty, biome=biome, river=river)
+        if tile_result is None:
+            tile_result = self.base_terrain(height, world_tx, world_ty)
+
+        prop = self.pick_prop(height, world_tx, world_ty, biome=biome, river=river)
+        return tile_result, prop
+
+    def _hash_prop_cell(self, pcx, pcy):
+        n = (pcx * 668265263) ^ (pcy * 374761393) ^ ((self.seed + 7) * 2654435761)
+        n = (n ^ (n >> 13)) * 2246822519
+        return (n ^ (n >> 16)) & 0xffffffff
+
+    def _prop_site(self, pcx, pcy):
+        """
+        Punto candidato a prop dentro de la celda (pcx, pcy) de
+        PROP_CELL_SIZE x PROP_CELL_SIZE tiles, con jitter determinista
+        -mismo criterio que _site() para los sitios Voronoi de bioma,
+        pero con el jitter acotado al centro de la celda vía
+        PROP_JITTER_MARGIN-. Sin ese margen, dos celdas vecinas podrían
+        elegir candidatos pegados al borde compartido y terminar casi
+        superpuestos -lo comprobé generando un mapa de prueba: sin
+        margen, la distancia mínima real entre props llegaba a bajar
+        a medio tile-. Con el margen, la distancia mínima GARANTIZADA
+        entre candidatos de celdas vecinas es 2*PROP_JITTER_MARGIN + 1
+        tiles (en vez de depender solo de la suerte del jitter).
+
+        Devuelve (tile_x, tile_y, roll): la celda entera comparte un
+        único "roll" (float determinista en [0, 1)) que decide CUÁL
+        prop del bioma le toca a su candidato, si le toca alguno.
+        """
+        key = (pcx, pcy)
+        cached = self._prop_site_cache.get(key)
+        if cached is not None:
+            return cached
+        rng = random.Random(self._hash_prop_cell(pcx, pcy))
+        m = self.PROP_JITTER_MARGIN
+        jitter_x = rng.randrange(m, self.PROP_CELL_SIZE - m)
+        jitter_y = rng.randrange(m, self.PROP_CELL_SIZE - m)
+        tile_x = pcx * self.PROP_CELL_SIZE + jitter_x
+        tile_y = pcy * self.PROP_CELL_SIZE + jitter_y
+        roll = rng.random()
+        result = (tile_x, tile_y, roll)
+        self._prop_site_cache[key] = result
+        return result
+
+    def pick_prop(self, height, world_tx, world_ty, biome=None, river=None):
+        """
+        Devuelve (sprite, size_px) si a ESTE tile le toca ser el ÚNICO
+        prop de su celda de PROP_CELL_SIZE tiles -ver PROP_CELL_SIZE en
+        el docstring de la clase-, o None en cualquier otro caso.
+
+        Chequea primero si el tile es el candidato de su celda -barato,
+        no toca is_river()/get_biome()- antes de resolver height/río/
+        bioma: para la enorme mayoría de tiles (los que no son
+        candidatos de ninguna celda) esto no cuesta casi nada.
+
+        "biome"/"river" se pueden pasar ya calculados (ver tile_data);
+        si se dejan en None, se resuelven acá -pero solo si hace
+        falta, es decir, solo para el candidato de la celda-.
+        """
+        pcx = math.floor(world_tx / self.PROP_CELL_SIZE)
+        pcy = math.floor(world_ty / self.PROP_CELL_SIZE)
+        tile_x, tile_y, roll = self._prop_site(pcx, pcy)
+        if (world_tx, world_ty) != (tile_x, tile_y):
+            return None  # este tile no es el candidato de su celda
+
+        if not (self.BIOME_MIN_HEIGHT < height <= self.BIOME_MAX_HEIGHT):
+            return None
+
+        if river is None:
+            river = self.is_river(world_tx, world_ty)
+        if river:
+            return None
+
+        if biome is None:
+            biome = self.get_biome(world_tx, world_ty)
+        props = biome.get("props")
+        if not props:
+            return None
+
+        acc = 0.0
+        for spr, size_px, chance in props:
+            acc += chance
+            if roll < acc:
+                return spr, size_px
+        return None
 
 
 class tile:
     __slots__ = ("height", "biome", "color", "walkable", "spr")
 
-    def __init__(self, height, overlay=None):
-        name, color, walkable = height_map(height)
-        spr = None  # terreno base (agua, arena, montania, nieve) todavía sin sprite propio
-        if overlay is not None:
-            name, color, walkable, spr = overlay
+    def __init__(self, height, data):
+        name, color, walkable, spr = data
         self.height = height
         self.biome = name
         self.color = color
@@ -151,9 +458,10 @@ class chunk:
         self.size = size
         self.instances = []  # bloques/objetos colocados en este chunk (ver add_instance)
         self.entities = []   # entidades registradas en este chunk (ver add_entity)
+        self.props = []      # adornos (planta/árbol) más grandes que un tile: (world_x, world_y, spr)
         self.tiles = self._generate(noise_gen, features)
         self.surface = self._build_surface()  # placeholder visual, ver nota al final
- 
+
     def _generate(self, noise_gen, features):
         tiles = [[None] * self.size for _ in range(self.size)]
         base_x = self.cx * self.size
@@ -163,10 +471,23 @@ class chunk:
                 world_tx = base_x + tx
                 world_ty = base_y + ty
                 h = noise_gen.fbm(world_tx, world_ty)
-                overlay = features.overlay(h, world_tx, world_ty)
-                tiles[ty][tx] = tile(h, overlay)
+                data, prop = features.tile_data(h, world_tx, world_ty)
+                tiles[ty][tx] = tile(h, data)
+
+                if prop is not None:
+                    spr, size_px = prop
+                    # Se guardan en píxeles de mundo -NO horneados en
+                    # self.surface- para que un árbol de 64/128px pueda
+                    # dibujarse completo aunque su tile de origen esté
+                    # cerca del borde del chunk, sin que el chunk vecino
+                    # lo recorte. Anclado centrado en x y con la base
+                    # apoyada en el borde inferior del tile, para que
+                    # los sprites más grandes "crezcan" hacia arriba.
+                    world_px = world_tx * tile_size + tile_size // 2 - size_px // 2
+                    world_py = world_ty * tile_size + tile_size - size_px
+                    self.props.append((world_px, world_py, spr))
         return tiles
- 
+
     def _build_surface(self):
         px = self.size * tile_size
         surf = pygame.Surface((px, px))
@@ -179,12 +500,12 @@ class chunk:
                 else:
                     surf.fill(t.color, rect)
         return surf
- 
+
     @property
     def world_pos(self):
         """Esquina superior izquierda del chunk, en píxeles del mundo"""
         return pygame.Vector2(self.cx * self.size * tile_size, self.cy * self.size * tile_size)
- 
+
     def get_tile(self, local_x, local_y):
         if 0 <= local_x < self.size and 0 <= local_y < self.size:
             return self.tiles[local_y][local_x]
@@ -194,7 +515,7 @@ class chunk:
 class map_gen:
     """
     Mundo procedural infinito basado en chunks.
- 
+
     - self.chunks guarda en memoria TODOS los chunks que se han generado
       alguna vez (dict, nunca se borra por defecto), incluidos los que
       quedaron fuera del alcance del jugador. Así, si vuelve a esa zona,
@@ -202,18 +523,18 @@ class map_gen:
     - self.active_chunks es el subconjunto que rodea al jugador ahora
       mismo (radio configurable) y es lo único que se procesa/dibuja.
     """
- 
+
     def __init__(self, seed=None, chunk_size=16, render_radius=2):
         self.seed = seed if seed is not None else random.randint(0, 999_999)
         self.noise_gen = noise2(self.seed)
         self.features = map_features(self.seed)
         self.chunk_size = chunk_size
         self.render_radius = render_radius  # radio de chunks alrededor del jugador
- 
+
         self.chunks = {}            # (cx, cy) -> Chunk  (almacenamiento permanente)
         self.active_chunks = set()  # (cx, cy) actualmente cerca del jugador
         self.player_chunk = None
- 
+
     # --------------------------------------------------------
     def world_to_chunk(self, world_x, world_y):
         """Coordenadas de píxel del mundo -> coordenadas de chunk (soporta negativos)"""
@@ -221,7 +542,7 @@ class map_gen:
         cx = math.floor(world_x / chunk_px)
         cy = math.floor(world_y / chunk_px)
         return cx, cy
- 
+
     def get_or_generate_chunk(self, cx, cy):
         key = (cx, cy)
         _chunk = self.chunks.get(key)
@@ -229,7 +550,7 @@ class map_gen:
             _chunk = chunk(cx, cy, self.chunk_size, self.noise_gen, self.features)
             self.chunks[key] = _chunk
         return _chunk
- 
+
     # --------------------------------------------------------
     def update(self, player):
         """
@@ -239,53 +560,85 @@ class map_gen:
         en self.chunks pero no se procesa ni se dibuja.
         """
         cx, cy = self.world_to_chunk(player.position.x, player.position.y)
- 
+
         if (cx, cy) == self.player_chunk:
             return  # el jugador sigue en el mismo chunk, nada que hacer
- 
+
         self.player_chunk = (cx, cy)
         new_active = set()
- 
+
         for oy in range(-self.render_radius, self.render_radius + 1):
             for ox in range(-self.render_radius, self.render_radius + 1):
                 ccx, ccy = cx + ox, cy + oy
                 self.get_or_generate_chunk(ccx, ccy)
                 new_active.add((ccx, ccy))
- 
+
         self.active_chunks = new_active
- 
+
     # --------------------------------------------------------
     def draw(self, camera, screen):
-        """Dibuja solo los chunks activos que además sean visibles por la cámara"""
+        """
+        Dibuja los chunks activos visibles por la cámara y, encima,
+        sus adornos (props: plantas/árboles) ordenados por profundidad
+        (world_y), como en cualquier top-down clásico -así un árbol
+        "de abajo" tapa a uno "de arriba" cuando se superponen-.
+
+        LIMITACIÓN CONOCIDA: un prop se guarda en el chunk que
+        contiene el tile donde nace, y solo se dibuja si ESE chunk
+        está activo. Un árbol grande (128px) cerca del borde puede
+        desaparecer un frame antes de lo esperado si su chunk se
+        desactiva mientras la copa todavía sería visible. Para
+        mundos con render_radius chico esto casi no se nota; si
+        molesta, aumentá render_radius en vez de tocar esto.
+        """
         chunk_px = self.chunk_size * tile_size
         cam_rect = camera.camera
- 
+
+        visible_props = []
+
         for key in self.active_chunks:
-            chunk = self.chunks.get(key)
-            if chunk is None:
+            _chunk = self.chunks.get(key)
+            if _chunk is None:
                 continue
- 
-            chunk_rect = pygame.Rect(chunk.world_pos.x, chunk.world_pos.y, chunk_px, chunk_px)
+
+            chunk_rect = pygame.Rect(_chunk.world_pos.x, _chunk.world_pos.y, chunk_px, chunk_px)
             if not cam_rect.colliderect(chunk_rect):
                 continue  # activo pero fuera de cámara, no se dibuja
- 
-            screen.blit(chunk.surface, camera.apply_rect(chunk_rect))
- 
+
+            screen.blit(_chunk.surface, camera.apply_rect(chunk_rect))
+            visible_props.extend(_chunk.props)
+
+        visible_props.sort(key=lambda p: p[1])  # por world_y: "más abajo" se dibuja encima
+
+        for world_x, world_y, spr in visible_props:
+            prop_rect = pygame.Rect(world_x, world_y, spr.get_width(), spr.get_height())
+            if cam_rect.colliderect(prop_rect):
+                screen.blit(spr, camera.apply_rect(prop_rect))
+
     # --------------------------------------------------------
     def get_tile_at_world(self, world_x, world_y):
         """Tile correspondiente a una posición del mundo en píxeles (genera el chunk si hace falta)"""
         chunk_px = self.chunk_size * tile_size
         cx, cy = self.world_to_chunk(world_x, world_y)
-        chunk = self.get_or_generate_chunk(cx, cy)
- 
+        _chunk = self.get_or_generate_chunk(cx, cy)
+
         local_x = int((world_x - cx * chunk_px) / tile_size)
         local_y = int((world_y - cy * chunk_px) / tile_size)
-        return chunk.get_tile(local_x, local_y)
- 
+        return _chunk.get_tile(local_x, local_y)
+
     def is_walkable(self, world_x, world_y):
-        tile = self.get_tile_at_world(world_x, world_y)
-        return tile.walkable if tile else False
- 
+        t = self.get_tile_at_world(world_x, world_y)
+        return t.walkable if t else False
+
+    def is_walkable_tile(self, tile_x, tile_y):
+        """
+        Igual que is_walkable(), pero recibe coordenadas de TILE en vez
+        de píxeles -pensado para pasarlo directo como callback a
+        Entity.random_patrol()/Entity.find_path(), que trabajan en
+        tiles-. Ej: entidad.random_patrol(world.is_walkable_tile, ...).
+        """
+        return self.is_walkable(tile_x * tile_size, tile_y * tile_size)
+
     # --------------------------------------------------------
     def unload_far_chunks(self, max_distance):
         """
@@ -313,9 +666,9 @@ class map_gen:
         WIP: falta definir el esquema definitivo de instancias.
         """
         cx, cy = self.world_to_chunk(world_x, world_y)
-        chunk = self.get_or_generate_chunk(cx, cy)
-        chunk.instances.append(instance_data)
- 
+        _chunk = self.get_or_generate_chunk(cx, cy)
+        _chunk.instances.append(instance_data)
+
     def add_entity(self, entity):
         """
         Registra una entidad en el chunk que le corresponde según su
@@ -334,11 +687,11 @@ class map_gen:
                 "y": entity.position.y,
                 "hp": getattr(entity, "hp", None),
             }
- 
+
         cx, cy = self.world_to_chunk(entity.position.x, entity.position.y)
-        chunk = self.get_or_generate_chunk(cx, cy)
-        chunk.entities.append(data)
- 
+        _chunk = self.get_or_generate_chunk(cx, cy)
+        _chunk.entities.append(data)
+
     def save(self, filepath):
         """
         Guarda en un .json TODOS los chunks actualmente en memoria
@@ -355,19 +708,19 @@ class map_gen:
             "render_radius": self.render_radius,
             "chunks": [],
         }
- 
-        for (cx, cy), chunk in self.chunks.items():
+
+        for (cx, cy), _chunk in self.chunks.items():
             data["chunks"].append({
                 "cx": cx,
                 "cy": cy,
-                "tiles": [[tile.height for tile in row] for row in chunk.tiles],
-                "instances": chunk.instances,
-                "entities": chunk.entities,
+                "tiles": [[t.height for t in row] for row in _chunk.tiles],
+                "instances": _chunk.instances,
+                "entities": _chunk.entities,
             })
- 
+
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(data, f)
- 
+
     def load(self, filepath):
         """
         Carga un mundo previamente guardado con save(). Reconstruye
@@ -380,7 +733,7 @@ class map_gen:
         """
         with open(filepath, "r", encoding="utf-8") as f:
             data = json.load(f)
- 
+
         self.seed = data["seed"]
         self.noise_gen = noise2(self.seed)
         self.features = map_features(self.seed)
@@ -389,7 +742,7 @@ class map_gen:
         self.chunks = {}
         self.active_chunks = set()
         self.player_chunk = None
- 
+
         for chunk_data in data["chunks"]:
             cx, cy = chunk_data["cx"], chunk_data["cy"]
             self.chunks[(cx, cy)] = chunk.from_data(

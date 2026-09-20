@@ -1,6 +1,11 @@
 class prop:
+    @staticmethod
     def set_value(element, value):
         element = value
+        return element
+
+    def get_value():
+        
 
 
 class flamable(prop):

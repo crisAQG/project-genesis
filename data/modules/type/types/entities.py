@@ -1,35 +1,26 @@
 import pygame
 from pygame import Vector2
 
-from data.modules.services.spr_manager import spr_manager
+from data.modules.services.gui import text, img_button
 from data.modules.type.entity import Entity
 from data.modules.services.inventory import inventory
 from settings import *
 
 
 class player(Entity):
-    def __init__(self, game, scene, worldx, worldy, size, scale, hp, dmg, speed, sprint_boost, shield, color, image, is_flying=False):
-        super().__init__(worldx, worldy, size, scale, color, is_flying)
+    def __init__(self, game, scene, worldx, worldy, size, scale, hp, dmg, speed, sprint_boost, shield, color, spr, sx, sy, is_flying=False):
+        super().__init__(worldx, worldy, size, scale, hp, speed, dmg, shield, color, spr, sx, sy, is_flying)
         self.game = game
         self.scene = scene
 
         # Crea la UI del inventario
-        
-        self.velocity = Vector2(0, 0)
-        self.angle = 0
-        self.rotation_speed = 5
-
-        self.hp = hp
-        self.speed = speed
+        self.inventory = inventory(game)
         self.sprint = sprint_boost
-        self.dmg = dmg
-        self.shield = shield
 
-        self.original_image = spr_manager(image).get_sprite(0, 0, self.size, self.size)
-        self.original_image = pygame.transform.scale(self.original_image, (self.size, self.size))
-        self.image = self.original_image.copy()
-        self.rect = self.image.get_rect(topleft=(self.position.x, self.position.y))
-
+        self.active_inventory = False
+        self.e_pressed = False
+        self.esc_pressed = False
+       
     def movement(self):
         self.position += self.velocity
 
@@ -40,72 +31,78 @@ class player(Entity):
         keys = pygame.key.get_pressed()
         self.velocity = Vector2(0, 0)
 
+        if keys[pygame.K_e] and not self.e_pressed:
+            self.active_inventory = not self.active_inventory
+            self.inventory.appear(self.active_inventory)
+            self.e_pressed = True
+
+        if not keys[pygame.K_e]:
+            self.e_pressed = False
+
+        """if keys[pygame.K_ESCAPE] and (not self.esc_pressed and (self.e_pressed == False)):
+            self.esc_pressed = True
+            do = True
+            for i in self.menu:
+                if do:
+                    do = not do
+                    #i.move_to(i.x + self.game.screen.get_width(), i.y)
+                else:
+                    #i.move_to(i.x - self.game.screen.get_width(), i.y)
+                    pass
+
+        if not keys[pygame.K_ESCAPE]:
+            self.esc_pressed = False"""
+
         if keys[pygame.K_a]:
             self.velocity.x = -self.speed
-            self.target_angle = 90
         if keys[pygame.K_d]:
             self.velocity.x = self.speed
-            self.target_angle = 270
         if keys[pygame.K_w]:
             self.velocity.y = -self.speed
-            self.target_angle = 0
         if keys[pygame.K_s]:
             self.velocity.y = self.speed
-            self.target_angle = 180
 
-        if keys[pygame.KMOD_SHIFT]:
-            if keys[pygame.K_a]:
-                self.velocity.x = -self.speed * self.sprint
-                self.target_angle = 90
-            if keys[pygame.K_d]:
-                self.velocity.x = self.speed * self.sprint
-                self.target_angle = 270
-            if keys[pygame.K_w]:
-                self.velocity.y = -self.speed * self.sprint
-                self.target_angle = 0
-            if keys[pygame.K_s]:
-                self.velocity.y = self.speed * self.sprint
-                self.target_angle = 180
+        if keys[pygame.K_a] and (keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]):
+            self.velocity.x = -self.speed * self.sprint
+        if keys[pygame.K_d] and (keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]):
+            self.velocity.x = self.speed * self.sprint
+        if keys[pygame.K_w] and (keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]):
+            self.velocity.y = -self.speed * self.sprint
+        if keys[pygame.K_s] and (keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]):
+            self.velocity.y = self.speed * self.sprint
 
         if self.velocity.x != 0 and self.velocity.y != 0:
             self.velocity *= 0.7071 
 
-    def rotate(self):
-        if hasattr(self, 'target_angle'):
-            angle_diff = (self.target_angle - self.angle) % 360
-            if angle_diff > 180:
-                angle_diff -= 360
-            if abs(angle_diff) < self.rotation_speed:
-                self.angle = self.target_angle
-            else:
-                self.angle += self.rotation_speed if angle_diff > 0 else -self.rotation_speed
-
-        self.angle %= 360
-        self.image = pygame.transform.rotate(self.original_image, self.angle)
-        self.rect = self.image.get_rect(center=self.rect.center)
-
-    def inventory(self):
-        pass
-
     def update(self):
-        self.keyboard_commands()
-        self.movement()
-        self.rotate()
+        self.keyboard_commands()   
+        self.rotate(self.velocity)
 
+        self.movement()
+
+        self.inventory.update()
+
+        #for i in self.menu:
+            #i.update_movement()
+            #and (self.esc_pressed == False)
+        
         self.rect.center = self.position
 
     def draw(self, camera, screen):
         screen.blit(self.image, camera.apply(self))
+        self.inventory.draw(screen)
+        #for i in self.menu:
+            #i.draw(screen)
+            
 
 
 class npc(Entity):
-    def __init__(self, worldx, worldy, size, scale, color, is_flying=False):
-        super().__init__(worldx, worldy, size, scale, color, is_flying)
-        self.img = spr_manager("data\sprites\Player.png").get_sprite(0, 0, self.size, self.size)
-        self.rect = self.img.get_rect()
+    def __init__(self, worldx, worldy, size, scale, hp, dmg, speed, shield, color, spr, sx, sy, is_flying=False):
+        
+        super().__init__(worldx, worldy, size, scale, hp, speed, dmg, shield, color, spr, sx, sy, is_flying)
 
     def update(self):
         self.rect.center = self.position
 
-    def draw(self, screen, camera):
-        screen.blit(self.img, camera.apply_rect(self.rect))
+    def draw(self, camera, screen):
+        screen.blit(self.image, camera.apply_rect(self.rect))

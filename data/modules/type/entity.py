@@ -1,28 +1,78 @@
 import heapq
 import random
+import pygame
 from pygame.math import Vector2
+from data.modules.services.spr_manager import spr_manager
 
 
 class Entity:
 
-    def __init__(self, worldx, worldy, size, scale, color, is_flying=False):
+    def __init__(self, worldx, worldy, size, scale, hp, speed, dmg, shield, color, spr, sx, sy, is_flying=False):
         self.position = Vector2(worldx, worldy)
         self.size = size
         self.scale = scale
         self.color = color
         self.is_flying = is_flying
 
+        self.velocity = Vector2(0, 0)
+        self.angle = 0
+        self.rotation_speed = 5
+
+        # Stats
+        self.hp = hp
+        self.speed = speed
+        self.dmg = dmg
+        self.shield = shield
+
         # IA
         self.priorities = []
 
-        # Patrulla aleatoria
         self.patrol_target = None
         self.patrol_path = []
         self.patrol_path_index = 0
+        self._patrol_cycle_start = None
+
+        try:
+            self.original_image = spr_manager(spr).get_sprite(sx, sy, self.size, self.size)
+            self.original_image = pygame.transform.scale(self.original_image, (self.size, self.size))
+            self.active_sprite = True
+        except Exception as e:
+            print(f"⚠️ Entity: no pude cargar sprite '{spr}', uso un color de relleno ({e})")
+            self.original_image = pygame.Surface((self.size, self.size))
+            self.original_image.fill(color)
+            self.active_sprite = False
+
+        self.image = self.original_image.copy()
+        self.rect = self.image.get_rect(topleft=(self.position.x, self.position.y))
 
     # ==========================================================
     # MOVIMIENTO
     # ==========================================================
+
+    def rotate(self, direction):
+        if direction.length_squared() == 0:
+            return
+
+        target_angle = direction.angle_to(Vector2(1, 0))-90
+
+        angle_diff = (target_angle - self.angle) % 360
+
+        if angle_diff > 180:
+            angle_diff -= 360
+
+        if abs(angle_diff) < self.rotation_speed:
+            self.angle = target_angle
+        else:
+            self.angle += self.rotation_speed if angle_diff > 0 else -self.rotation_speed
+
+        self.angle %= 360
+
+        self.image = pygame.transform.rotate(
+            self.original_image,
+            self.angle
+        )
+
+        self.rect = self.image.get_rect(center=self.rect.center)
 
     @staticmethod
     def chase_target(entity_pos, target_pos, speed):
@@ -88,99 +138,131 @@ class Entity:
     # PATRULLA ALEATORIA (mundo infinito)
     # ==========================================================
 
-    def random_patrol(self, is_walkable, patrol_radius, speed, game, tile_size=1):
+    def random_patrol(self, game, patrol_radius=10, tile_size=1,
+                       active_duration=6000, cycle_duration=11000):
         """
-        Patrulla aleatoriamente alrededor de la entidad usando A*, SIN
-        depender de un tamaño de mundo fijo -map_width/map_height ya
-        no existen-: el destino se busca dentro de "patrol_radius"
-        tiles alrededor de la POSICIÓN ACTUAL de la entidad, así que
-        funciona igual de bien cerca del (0, 0) que a millones de
-        tiles de distancia, como corresponde a un mundo infinito
-        generado por chunks (map_gen.py).
+        Patrulla en ciclos alrededor de la posición actual, usando A*,
+        SIN depender de un tamaño de mundo fijo -el destino se busca
+        dentro de "patrol_radius" tiles alrededor de donde está la
+        entidad AHORA, así que funciona igual cerca del (0,0) que a
+        millones de tiles de distancia-.
 
-        is_walkable(tile_x, tile_y):
-            Debe devolver True si la celda -en coordenadas de TILE, no
-            de píxeles- se puede atravesar. Si tu mapa expone
-            is_walkable en píxeles (como map_gen.is_walkable), pasale
-            el wrapper en tiles (map_gen.is_walkable_tile).
+        Cada ciclo dura "cycle_duration" ms: durante los primeros
+        "active_duration" ms la entidad busca destino y lo persigue
+        con A*; el resto del ciclo queda quieta. Al pasar
+        "cycle_duration" arranca un ciclo nuevo con un destino nuevo.
+        El reloj del ciclo es un atributo PROPIO de la entidad
+        (self._patrol_cycle_start) -si lo guardás en el objeto game
+        compartido, dos entidades patrullando se resetean el ciclo
+        una a la otra-.
+
+        game:
+            Necesita exponer:
+              - game.ahora: el reloj del juego en ms (mismo que uses
+                en el resto del loop).
+              - game.world.is_walkable_tile(tile_x, tile_y): callback
+                de caminable en coordenadas de TILE (no píxeles). Si
+                tu mundo expone is_walkable en píxeles, usá el wrapper
+                (map_gen.is_walkable_tile ya existe para esto).
 
         patrol_radius:
             Radio de búsqueda en tiles alrededor de la posición actual
-            para elegir el próximo destino de patrulla.
-
-        speed:
-            Velocidad de movimiento en píxeles/frame.
+            para elegir destino.
 
         tile_size:
             Tamaño de un tile en píxeles, para convertir entre la
-            posición de mundo (en píxeles) de la entidad y las
-            coordenadas de grid (en tiles) que usan is_walkable y A*.
+            posición de mundo (píxeles) de la entidad y las
+            coordenadas de grid (tiles) que usan is_walkable y A*.
             Dejalo en 1 si tu mundo ya trabaja 1:1 en píxeles.
 
-        La entidad:
+        La entidad, cada ciclo:
             1. Elige una celda caminable dentro del radio.
             2. Calcula un camino mediante A*.
-            3. Sigue el camino.
-            4. Al llegar, elige otro destino.
+            3. Sigue el camino (rotando hacia donde avanza).
+            4. Al llegar, o al pasarse de active_duration, se detiene
+               hasta el próximo ciclo.
         """
-        if game.ahora - game.inicio <=6000:
-            # Si no tenemos destino, buscar uno
-            if self.patrol_target is None:
+        if self._patrol_cycle_start is None:
+            self._patrol_cycle_start = game.ahora
 
-                origin = self.get_grid_position(tile_size)
+        elapsed = game.ahora - self._patrol_cycle_start
 
-                self.patrol_target = self.get_random_walkable_position(
-                    is_walkable,
-                    origin,
-                    patrol_radius
-                )
+        # Ciclo terminado: arrancar uno nuevo (destino/camino nuevos)
+        if elapsed >= cycle_duration:
+            self._patrol_cycle_start = game.ahora
+            self.patrol_target = None
+            self.patrol_path = []
+            self.patrol_path_index = 0
+            return
 
-                if self.patrol_target is None:
-                    return
+        # Fuera de la ventana activa: quieta hasta el próximo ciclo
+        if elapsed > active_duration:
+            return
 
-                self.patrol_path = self.find_path(
-                    origin,
-                    self.patrol_target,
-                    is_walkable
-                )
+        is_walkable = game.world.is_walkable_tile
 
-                self.patrol_path_index = 0
+        # Sin destino todavía: elegir uno y calcular el camino
+        if self.patrol_target is None:
+            origin = self.get_grid_position(tile_size)
 
-            # Si no encontramos camino, buscar otro destino
-            if not self.patrol_path:
-                self.patrol_target = None
-                return
-
-            # Si llegamos al final del camino
-            if self.patrol_path_index >= len(self.patrol_path):
-                self.patrol_target = None
-                self.patrol_path = []
-                self.patrol_path_index = 0
-                return
-
-            # Siguiente celda (en tiles) -> posición de mundo (en píxeles)
-            target_cell = self.patrol_path[self.patrol_path_index]
-
-            target_position = Vector2(
-                target_cell[0] * tile_size,
-                target_cell[1] * tile_size
+            self.patrol_target = self.get_random_walkable_position(
+                is_walkable,
+                origin,
+                patrol_radius
             )
 
-            direction = target_position - self.position
-            distance = direction.length()
+            if self.patrol_target is None:
+                return  # no encontró celda caminable cerca; probará el próximo ciclo
 
-            # Llegamos a la celda
-            if distance <= speed:
-                self.position = target_position
-                self.patrol_path_index += 1
-                return
+            self.patrol_path = self.find_path(
+                origin,
+                self.patrol_target,
+                is_walkable
+            )
 
-            # Movernos hacia la celda
-            if distance > 0:
-                self.position += direction.normalize() * speed
+            self.patrol_path_index = 0
 
-        if game.ahora - game.inicio >= 11000:
-            game.inicio = game.ahora
+        # A* no encontró camino hasta el destino
+        if not self.patrol_path:
+            self.patrol_target = None
+            return
+
+        # Ya recorrió todo el camino: esperar al próximo ciclo
+        if self.patrol_path_index >= len(self.patrol_path):
+            return
+
+        # Siguiente celda del camino
+        target_cell = self.patrol_path[self.patrol_path_index]
+
+        target_position = Vector2(
+            target_cell[0] * tile_size,
+            target_cell[1] * tile_size
+        )
+
+        direction = target_position - self.position
+        distance = direction.length()
+
+        # Ya estamos en la celda
+        if distance == 0:
+            self.patrol_path_index += 1
+            return
+
+        direction = direction.normalize()
+
+        # Rotar hacia donde se mueve
+        self.rotate(direction)
+
+        # Avanzar
+        if distance <= self.speed:
+            self.position = target_position
+            self.patrol_path_index += 1
+        else:
+            self.position += direction * self.speed
+
+        # Sincronizar el rect con la posición -sin esto, la entidad se
+        # mueve "de verdad" (self.position) pero se dibuja siempre en
+        # el mismo lugar, porque nada más toca self.rect.center-.
+        self.rect.center = self.position
 
     # ==========================================================
     # UTILIDADES DE PATRULLA

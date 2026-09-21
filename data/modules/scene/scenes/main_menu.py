@@ -294,6 +294,7 @@ class main_menu(scene):
 
         if self.enter_wrld.event():
             self.world_data = [self.w_name_input.get_text(), self.dif_sel, int(self.w_seed_input.get_text())]
+
             self.game.set_scene("game", self.world_data)
 
         if self.vol_slide.event():

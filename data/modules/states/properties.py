@@ -4,9 +4,6 @@ class prop:
         element = value
         return element
 
-    def get_value():
-        
-
 
 class flamable(prop):
     def __init__(self, flam_val: float=0):
@@ -17,6 +14,7 @@ class flamable(prop):
         Args:
             flam_val: porcentaje de inflamabilidad en decimal, del 0 al 1 
         """
+        self.flameability = 0
         self.flameability = max(0, min(1, flam_val))
 
     def flam(self) -> float:

@@ -15,25 +15,24 @@ class window:
         self.running = True
 
         self.font = pygame.font.Font(None, size=16)
-
         self.gui = spr_manager("data/sprites/gui.png")
 
         self.world_data = ["", "", 0]
 
         self.scene_map = {
             "test": lambda: test.test(self),
-            "main_menu": lambda: main_menu.main_menu(self),
+            "main menu": lambda: main_menu.main_menu(self),
             "game": lambda: game.game(self, self.world_data),
             #"world_creator": lambda: wrld_creator_menu(self),
             #"world": lambda: world(self)
         }
 
-        self.scene = self.scene_map["main_menu"]()
+        self.scene = self.scene_map["main menu"]()
 
     def set_scene(self, scene_name: str, data=None):
         """Cambiar escena con parámetros opcionales"""
         if scene_name in self.scene_map:
-            if scene_name == "world" and data is not None:
+            if scene_name == "game" and data is not None:
                 self.world_data = data
             self.scene = self.scene_map[scene_name]()
 

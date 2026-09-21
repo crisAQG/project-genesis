@@ -35,6 +35,7 @@ minimo y un maximo- con barra, relleno y manija arrastrable.
 
 import pygame
 
+from data.modules.type.item import item
 from settings import *
 
 
@@ -741,6 +742,50 @@ class img_button(img_element, _icon_label_mixin):
         screen.blit(self.image, self.rect)
         self._draw_icon_label(screen)
 
+
+class slot(img_element):
+    def __init__(self, x, y, sprite_manager, sx, sy, w, h, item: item=None, amount=0, scale=1, font=None, txt_color=None):
+        super().__init__(x, y, sprite_manager, sx, sy, w, h, scale)
+        self.clicked = False
+        
+        self.item = item
+        self.amount = amount
+        self.amount = min(100, max(0, self.amount))
+        self.amount_txt = text(self.x + w-16, self.y + h-12, str(amount), font, txt_color, 1)
+
+    def change_amount(self, amount):
+        self.amount += amount
+        if self.amount > 0:
+            self.amount_txt.set_text(str(self.amount))
+        else:
+            self.item = None
+
+    def add_item(self, item):
+        if self.item is None:
+            self.item = item
+
+    def event(self):
+        action = False
+        pos = pygame.mouse.get_pos()
+
+        if self.rect.collidepoint(pos):
+            if pygame.mouse.get_pressed()[0] == 1 and not self.clicked:
+                self.clicked = True
+                action = True
+
+        if pygame.mouse.get_pressed()[0] == 0:
+            self.clicked = False
+
+        return action
+
+    def draw(self, screen):
+        screen.blit(self.image, self.rect)
+        if self.item is not None:
+            self.item.rect.x, self.item.rect.y = self.x + 16, self.y + 16
+            self.amount_txt.set_pos(self.x + 64 - 20, self.y + 64 - 24)
+            self.item.draw(screen)
+            self.amount_txt.draw(screen)
+        
 
 class img_input(img_element, _text_input_mixin):
     """

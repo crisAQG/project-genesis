@@ -1,31 +1,27 @@
 import pygame
 
+from data.modules.services.spr_manager import spr_manager
+
 
 class item:
-    def __init__(self, name: str, x: int, y: int, size: int, color: tuple, spr:pygame.Surface=None, amount=0):
+    def __init__(self, name: str, x: int, y: int, size: int, color: tuple, spr:pygame.Surface, sx, sy):
         self.name = name
         self.y = y
         self.x = x
         self.size = size
 
         try:
-            self.spr = spr
+            self.spr = spr_manager(spr).get_sprite(sx, sy, size, size)
             self.rect = self.spr.get_rect()
             self.rect.topleft = (x, y)  
             self.active_sprite = True
-            
+
         except:
             self.surf = pygame.Surface((size, size))
             self.surf.fill(color)
             self.rect = self.surf.get_rect()
             self.rect.topleft = (x, y)
             self.active_sprite = False
-
-        self.amount = amount
-
-    def destroy(self, inventory):
-            if self.life == 0:
-                pass
 
     def draw(self, screen):
         if self.active_sprite:

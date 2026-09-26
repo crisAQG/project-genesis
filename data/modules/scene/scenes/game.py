@@ -12,9 +12,6 @@ class game(scene):
         self.inicio = pygame.time.get_ticks()
 
         self._w_data = world_data
-
-        print(world_data)
-
         self.world = map_gen(world_data[2])
 
         sp_x, sp_y = self._find_spawn(self.world)
@@ -75,9 +72,7 @@ class game(scene):
         self.bck_menu.update_movement()
 
     def draw(self, screen):
-        self.world.draw(self.camera, screen)
-        self.npc.draw(self.camera, screen)
-        self.plr.draw(self.camera, screen)
+        self.world.draw(self.camera, screen, [self.plr, self.npc])
 
         self.text_menu.draw(screen)
         self.bck_menu.draw(screen)

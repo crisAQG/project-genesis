@@ -1,10 +1,11 @@
-import pygame
+import pygame, random
 from pygame import Vector2
 
 from data.modules.services.gui import text, img_button
 from data.modules.type.entity import Entity
 from data.modules.services.inventory import inventory
 from settings import *
+from .items import load_items
 
 
 class player(Entity):
@@ -16,16 +17,48 @@ class player(Entity):
         # Crea la UI del inventario
         self.inventory = inventory(game)
         self.sprint = sprint_boost
+        
+        starter_i = load_items()
+
+        self.inventory.add_item(starter_i.get("stone-pickaxe"), 32)
+        self.inventory.add_item(starter_i.get("stone-axe"), 32)
+        self.inventory.add_item(starter_i.get("stone-sword"), 32)
 
         self.active_inventory = False
         self.e_pressed = False
         self.esc_pressed = False
+        self.f_pressed = False
        
     def movement(self):
         self.position += self.velocity
 
     def attack(self):
-        pass
+        self.harvest()
+
+    def harvest(self, tool=None, power=None, radius=40):
+        if tool is None:
+            tool = self.inventory._active_slot()
+        if power is None:
+            power = getattr(tool, "power", 1)
+
+        _chunk, prop = self.scene.world.get_prop_at_world(
+            self.position.x, self.position.y, radius=radius)
+
+        if prop is None:
+            return False
+
+        self.inventory.decrease_slot_amount(1, self.inventory._find_active_slot())
+
+        drops = prop.interact(tool=tool, power=power)
+        if drops is not None:
+            _chunk.mark_prop_destroyed(prop)
+            self._collect_drops(drops)
+
+        return True
+
+    def _collect_drops(self, drops):
+        for item, amount in drops:
+            self.inventory.add_item(item, amount)
 
     def keyboard_commands(self):
         keys = pygame.key.get_pressed()
@@ -39,19 +72,12 @@ class player(Entity):
         if not keys[pygame.K_e]:
             self.e_pressed = False
 
-        """if keys[pygame.K_ESCAPE] and (not self.esc_pressed and (self.e_pressed == False)):
-            self.esc_pressed = True
-            do = True
-            for i in self.menu:
-                if do:
-                    do = not do
-                    #i.move_to(i.x + self.game.screen.get_width(), i.y)
-                else:
-                    #i.move_to(i.x - self.game.screen.get_width(), i.y)
-                    pass
+        if keys[pygame.K_f] and not self.f_pressed:
+            self.harvest()
+            self.f_pressed = True
 
-        if not keys[pygame.K_ESCAPE]:
-            self.esc_pressed = False"""
+        if not keys[pygame.K_f]:
+            self.f_pressed = False
 
         if keys[pygame.K_a]:
             self.velocity.x = -self.speed
@@ -81,19 +107,12 @@ class player(Entity):
         self.movement()
 
         self.inventory.update()
+        self.inventory.event()
 
-        #for i in self.menu:
-            #i.update_movement()
-            #and (self.esc_pressed == False)
-        
         self.rect.center = self.position
 
     def draw(self, camera, screen):
         screen.blit(self.image, camera.apply(self))
-        self.inventory.draw(screen)
-        #for i in self.menu:
-            #i.draw(screen)
-            
 
 
 class npc(Entity):

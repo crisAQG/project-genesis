@@ -8,6 +8,7 @@ from data.modules.services.spr_manager import spr_manager
 class window:
     def __init__(self):
         pygame.init()
+
         self.screen = pygame.display.set_mode((1366, 768), pygame.FULLSCREEN)
         self.clock = pygame.time.Clock()
 

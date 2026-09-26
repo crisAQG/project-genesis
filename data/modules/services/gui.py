@@ -743,9 +743,23 @@ class img_button(img_element, _icon_label_mixin):
         self._draw_icon_label(screen)
 
 
-class slot(img_element):
-    def __init__(self, x, y, sprite_manager, sx, sy, w, h, item: item=None, amount=0, scale=1, font=None, txt_color=None):
-        super().__init__(x, y, sprite_manager, sx, sy, w, h, scale)
+class slot(_smooth_move_mixin):
+    def __init__(self, x, y, sprite, w, h, item: item=None, amount=0, scale=1, font=None, txt_color=None):
+        self.x = x
+        self.y = y
+
+        self.w = w
+        self.h = h
+        self.scale = scale
+
+        self.sprite = sprite
+
+        self.image = self._load_image()
+        self.rect = self.image.get_rect()
+        self._sync_rect()
+
+        self._init_movement(x, y)
+
         self.clicked = False
         
         self.item = item
@@ -778,13 +792,37 @@ class slot(img_element):
 
         return action
 
-    def draw(self, screen):
+    def update_img(self):
+        self.image = self._load_image()
+
+    def draw(self, camera, screen):
         screen.blit(self.image, self.rect)
         if self.item is not None:
             self.item.rect.x, self.item.rect.y = self.x + 16, self.y + 16
             self.amount_txt.set_pos(self.x + 64 - 20, self.y + 64 - 24)
-            self.item.draw(screen)
+            self.item.draw(camera, screen)
             self.amount_txt.draw(screen)
+
+    def _load_image(self):
+        base = self.sprite
+        w = max(1, int(self.w * self.scale))
+        h = max(1, int(self.h * self.scale))
+        if (w, h) != base.get_size():
+            base = pygame.transform.scale(base, (w, h))
+        return base
+
+    def set_scale(self, scale):
+        self.scale = scale
+        self.image = self._load_image()
+        self._sync_rect()
+
+    def set_pos(self, x, y):
+        self.x, self.y = x, y
+        self._sync_rect()
+
+    def _sync_rect(self):
+        self.rect.size = self.image.get_size()
+        self.rect.topleft = (round(self.x), round(self.y))
         
 
 class img_input(img_element, _text_input_mixin):

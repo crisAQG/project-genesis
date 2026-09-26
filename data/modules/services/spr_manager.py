@@ -5,7 +5,6 @@ class spr_manager:
     def __init__(self, file):
         try:
             self.sheet = pygame.image.load(file).convert_alpha()
-            print(f"✅ Spritesheet cargado: {file}")
         except Exception as e:
             print(f"❌ Error cargando spritesheet: {file} - {e}")
             self.sheet = pygame.Surface((1, 1))
